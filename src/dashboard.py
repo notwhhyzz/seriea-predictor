@@ -40,7 +40,7 @@ def get_upcoming_matches(days: int = 14):
         and_(
             Match.date >= date.today(),
             Match.date <= cutoff,
-            Match.status == 'SCHEDULED'
+            Match.status.in_(['SCHEDULED', 'TIMED'])
         )
     ).order_by(Match.date).all()
     
@@ -333,7 +333,7 @@ if page == "🏠 Dashboard":
                       else '—', axis=1
         )
         display_df['Correct'] = display_df.apply(
-            lambda r: r['Prediction'] == r['result'] if r['Prediction'] != '—' else None, axis=1)
+            lambda r: r['Prediction'] == r['result'] if r['Prediction'] != '—' else '—', axis=1)
         st.dataframe(
             display_df[['date', 'home_team', 'away_team', 'home_goals', 'away_goals', 'result', 'Prediction', 'Correct']],
             use_container_width=True,
