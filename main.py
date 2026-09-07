@@ -74,10 +74,12 @@ def cmd_update(args):
         run_once('predictions')
     if args.live:
         run_once('live')
+    if args.odds:
+        run_once('odds')
     if args.retrain:
         run_once('retrain')
-    
-    if not any([args.historical, args.upcoming, args.predictions, args.live, args.retrain]):
+
+    if not any([args.historical, args.upcoming, args.predictions, args.live, args.odds, args.retrain]):
         run_once('historical')
         run_once('upcoming')
         run_once('predictions')
@@ -194,6 +196,7 @@ def main():
     update_parser.add_argument('--upcoming', action='store_true', help='Update upcoming matches')
     update_parser.add_argument('--predictions', action='store_true', help='Update predictions')
     update_parser.add_argument('--live', action='store_true', help='Update live scores')
+    update_parser.add_argument('--odds', action='store_true', help='Update Gamdom odds via OddsPapi')
     update_parser.add_argument('--retrain', action='store_true', help='Retrain models')
     
     # predict

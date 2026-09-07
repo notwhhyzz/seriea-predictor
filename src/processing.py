@@ -96,8 +96,7 @@ class TeamNameMapper:
     }
     
     # football-data.org mapping
-    FOOTBALL_DATA_ORG_MAPPING = {
-        "Juventus FC": "Juventus",
+    FOOTBALL_DATA_ORG_MAPPING = {        "Juventus FC": "Juventus",
         "Torino FC": "Torino",
         "Inter": "Inter",
         "FC Internazionale Milano": "Inter",
@@ -106,8 +105,11 @@ class TeamNameMapper:
         "AS Roma": "Roma",
         "Roma": "Roma",
         "Lazio": "Lazio",
+        "SS Lazio": "Lazio",
         "Napoli": "Napoli",
+        "SSC Napoli": "Napoli",
         "Fiorentina": "Fiorentina",
+        "ACF Fiorentina": "Fiorentina",
         "Atalanta": "Atalanta",
         "Atalanta BC": "Atalanta",
         "Bologna": "Bologna",
@@ -145,6 +147,30 @@ class TeamNameMapper:
         "Juventus": "Juventus",
         "AC Milan": "Milan",
     }
+
+    # oddspapi.io mapping (Gamdom odds feed)
+    ODDSPAPI_MAPPING = {
+        "AC Milan": "Milan",
+        "AC Monza": "Monza",
+        "ACF Fiorentina": "Fiorentina",
+        "AS Roma": "Roma",
+        "Atalanta BC": "Atalanta",
+        "Bologna FC": "Bologna",
+        "Cagliari Calcio": "Cagliari",
+        "Como 1907": "Como",
+        "Frosinone Calcio": "Frosinone",
+        "Genoa CFC": "Genoa",
+        "Inter Milano": "Inter",
+        "Juventus Turin": "Juventus",
+        "Lazio Rome": "Lazio",
+        "Parma Calcio": "Parma",
+        "SSC Napoli": "Napoli",
+        "Sassuolo Calcio": "Sassuolo",
+        "Torino FC": "Torino",
+        "US Lecce": "Lecce",
+        "Udinese Calcio": "Udinese",
+        "Venezia FC": "Venezia",
+    }
     
     def __init__(self):
         self.canonical_to_sources = {}
@@ -164,6 +190,8 @@ class TeamNameMapper:
             return self.API_FOOTBALL_MAPPING.get(name, name)
         elif source == "football-data.org":
             return self.FOOTBALL_DATA_ORG_MAPPING.get(name, name)
+        elif source == "oddspapi":
+            return self.ODDSPAPI_MAPPING.get(name, name)
         else:
             # Fuzzy match
             matches = get_close_matches(name, self.CANONICAL_NAMES.values(), n=1, cutoff=0.8)

@@ -62,6 +62,11 @@ def get_upcoming_matches(days: int = 14):
             'odds_home': m.odds_home,
             'odds_draw': m.odds_draw,
             'odds_away': m.odds_away,
+            'odds_over_25': m.odds_over_25,
+            'odds_under_25': m.odds_under_25,
+            'odds_btts_yes': m.odds_btts_yes,
+            'odds_btts_no': m.odds_btts_no,
+            'odds_source': getattr(m, 'odds_source', None),
         })
     
     session.close()
@@ -164,6 +169,43 @@ def get_standings():
     
     session.close()
     return df
+
+
+@st.cache_data(ttl=6 * 3600)
+def get_live_standings():
+    """Fetch live current-season standings from football-data.org API.
+    Returns (DataFrame, season_label) or (None, None) on failure."""
+    try:
+        from src.fetchers.api_football import FootballDataOrgAPI
+        from src.processing import TeamNameMapper
+        api = FootballDataOrgAPI()
+        if not api.enabled:
+            return None, None
+        table = api.get_standings()
+        if not table:
+            return None, None
+        mapper = TeamNameMapper()
+        rows = []
+        for t in table:
+            rows.append({
+                'Pos': t.get('position'),
+                'Team': mapper.map_to_canonical(t['team'].get('name', ''), 'football-data.org'),
+                'MP': t.get('playedGames', 0),
+                'W': t.get('won', 0),
+                'D': t.get('draw', 0),
+                'L': t.get('lost', 0),
+                'GF': t.get('goalsFor', 0),
+                'GA': t.get('goalsAgainst', 0),
+                'GD': t.get('goalDifference', 0),
+                'Pts': t.get('points', 0),
+            })
+        df = pd.DataFrame(rows).sort_values('Pos').reset_index(drop=True)
+        comp = api.get_competition_info() or {}
+        season = comp.get('currentSeason', {})
+        label = f"{season.get('startDate', '')[:4]}/{season.get('endDate', '')[2:4]} (giornata {season.get('currentMatchday', '—')})"
+        return df, label
+    except Exception:
+        return None, None
 
 
 def plot_match_prediction(match_row):
@@ -384,8 +426,13 @@ elif page == "📅 Prossime Partite":
 
 elif page == "📊 Classifica":
     st.title("Classifica Serie A")
-    
-    standings = get_standings()
+
+    standings, season_label = get_live_standings()
+    if standings is not None:
+        st.caption(f"🔴 Live — stagione {season_label} (football-data.org, aggiornata ogni 6h)")
+    else:
+        st.caption("⚠️ Live non disponibile — classifica calcolata dallo storico DB")
+        standings = get_standings()
     
     # Color code positions
     def style_standings(row):
@@ -452,46 +499,56 @@ elif page == "📈 Analisi Squadra":
 
 elif page == "🎯 Value Bets":
     st.title("Value Bets Detection")
-    st.caption("Confronto probabilità modello vs quote implicite (quando disponibili)")
-    
+    st.caption("Modello vs quote Gamdom: edge = probabilità modello − probabilità implicita")
+
     upcoming = get_upcoming_matches(14)
+    # Assicura colonna sorgente quote (default gamdom se quote presenti)
+    if 'odds_source' not in upcoming.columns:
+        upcoming['odds_source'] = None
     value_bets = []
-    
+
+    MARKETS = [
+        ('1X2', [('1', 'pred_home', 'odds_home'), ('X', 'pred_draw', 'odds_draw'), ('2', 'pred_away', 'odds_away')]),
+        ('O/U 2.5', [('Over 2.5', 'pred_over_25', 'odds_over_25'), ('Under 2.5', 'pred_under_25', 'odds_under_25')]),
+        ('BTTS', [('GG Sì', 'pred_btts_yes', 'odds_btts_yes'), ('GG No', 'pred_btts_no', 'odds_btts_no')]),
+    ]
+
     for _, match in upcoming.iterrows():
-        if pd.notna(match['odds_home']) and match['odds_home'] > 0:
-            implied = {
-                'home': 1 / match['odds_home'],
-                'draw': 1 / match['odds_draw'] if pd.notna(match['odds_draw']) else 0,
-                'away': 1 / match['odds_away'] if pd.notna(match['odds_away']) else 0,
-            }
-            
-            for outcome, model_prob in [('home', match['pred_home']), ('draw', match['pred_draw']), ('away', match['pred_away'])]:
-                if implied[outcome] > 0:
-                    edge = model_prob - implied[outcome]
+        for market, legs in MARKETS:
+            for label, pred_col, odds_col in legs:
+                model_prob = match.get(pred_col)
+                odds = match.get(odds_col)
+                if pd.notna(model_prob) and pd.notna(odds) and odds > 1:
+                    implied = 1 / odds
+                    edge = model_prob - implied
                     if edge > 0.05:  # 5% minimum edge
                         value_bets.append({
                             'Match': f"{match['home_team']} vs {match['away_team']}",
                             'Date': match['date'],
-                            'Outcome': {'home': '1', 'draw': 'X', 'away': '2'}[outcome],
-                            'Model %': f"{model_prob:.1%}",
-                            'Implied %': f"{implied[outcome]:.1%}",
+                            'Mercato': market,
+                            'Esito': label,
+                            'Modello': f"{model_prob:.1%}",
+                            'Quota': f"{odds:.2f}",
+                            'Implicita': f"{implied:.1%}",
                             'Edge': f"{edge:.1%}",
-                            'Odds': {'home': match['odds_home'], 'draw': match['odds_draw'], 'away': match['odds_away']}[outcome],
+                            '_edge': edge,
                         })
-    
+
     if value_bets:
-        df = pd.DataFrame(value_bets)
-        df = df.sort_values('Edge', ascending=False)
+        df = pd.DataFrame(value_bets).sort_values('_edge', ascending=False).drop(columns=['_edge'])
+        n_quoted = int(upcoming['odds_home'].notna().sum()) if 'odds_home' in upcoming.columns else 0
+        st.success(f"Quote Gamdom su {n_quoted}/{len(upcoming)} partite • {len(df)} edge > 5%")
         st.dataframe(df, use_container_width=True, hide_index=True)
-        
-        # Chart
-        fig = px.bar(df, x='Match', y='Edge', color='Outcome',
-                     title='Value Bets - Edge vs Bookmakers',
-                     color_discrete_map={'1': '#2ecc71', 'X': '#f39c12', '2': '#e74c3c'})
+
+        # Chart (top 15 per leggibilità)
+        chart_df = pd.DataFrame(value_bets).sort_values('_edge', ascending=False).head(15)
+        chart_df['label'] = chart_df['Match'] + ' — ' + chart_df['Esito']
+        fig = px.bar(chart_df, x='label', y='_edge', color='Mercato',
+                     title='Top edge modello vs Gamdom')
         fig.update_layout(xaxis_tickangle=-45)
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("Nessun value bet trovato con le quote attuali")
+        st.info("Nessun edge > 5% al momento. Se le quote mancano, premi 'Aggiorna quote Gamdom' in Impostazioni.")
 
 elif page == "⚙️ Impostazioni":
     st.title("Impostazioni")
@@ -512,7 +569,13 @@ elif page == "⚙️ Impostazioni":
             run_once('upcoming')
             run_once('predictions')
         st.success("Aggiornamento completato!")
-    
+
+    if st.button("Aggiorna Quote Gamdom"):
+        with st.spinner("Scarico quote da Gamdom..."):
+            from src.scheduler import run_once
+            run_once('odds')
+        st.success("Quote aggiornate! Vai su 🎯 Value Bets per gli edge.")
+
     if st.button("Riatterra Modelli"):
         with st.spinner("Riaddestramento..."):
             from src.scheduler import run_once

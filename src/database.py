@@ -69,6 +69,8 @@ class Match(Base):
     odds_under_25 = Column(Float)
     odds_btts_yes = Column(Float)
     odds_btts_no = Column(Float)
+    odds_source = Column(String(50))  # e.g. gamdom, b365
+    odds_updated_at = Column(DateTime)
     
     # Predictions (our model outputs)
     pred_home_win = Column(Float)
@@ -229,20 +231,39 @@ class ModelPerformance(Base):
     )
 
 
+_migrated_paths = set()
+
+
 def get_engine(config_path: str = "config.yaml"):
     """Create SQLAlchemy engine from config"""
     with open(config_path) as f:
         config = yaml.safe_load(f)
     db_path = config["database"]["path"]
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    return create_engine(f"sqlite:///{db_path}", echo=config["database"]["echo"])
+    engine = create_engine(f"sqlite:///{db_path}", echo=config["database"]["echo"])
+    _ensure_migrated(engine, db_path)
+    return engine
+
+
+def _ensure_migrated(engine, db_path: str):
+    """create_all + lightweight migration for columns added after first init.
+    Runs once per DB path per process; safe to call on every connection."""
+    if db_path in _migrated_paths:
+        return
+    Base.metadata.create_all(engine)
+    from sqlalchemy import text
+    with engine.begin() as conn:
+        existing = {r[1] for r in conn.execute(text("PRAGMA table_info(matches)")).fetchall()}
+        if existing and "odds_source" not in existing:
+            conn.execute(text("ALTER TABLE matches ADD COLUMN odds_source VARCHAR(50)"))
+        if existing and "odds_updated_at" not in existing:
+            conn.execute(text("ALTER TABLE matches ADD COLUMN odds_updated_at DATETIME"))
+    _migrated_paths.add(db_path)
 
 
 def init_db(config_path: str = "config.yaml"):
     """Initialize database tables"""
-    engine = get_engine(config_path)
-    Base.metadata.create_all(engine)
-    return engine
+    return get_engine(config_path)
 
 
 def get_session(config_path: str = "config.yaml"):

@@ -39,6 +39,7 @@ jobs:
         env:
           FOOTBALL_DATA_ORG_API_KEY: ${{ secrets.FOOTBALL_DATA_ORG_API_KEY }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
       
       - name: Commit database changes
         run: |
@@ -75,10 +76,11 @@ jobs:
       
       - name: Update upcoming matches and predictions
         run: |
-          python main.py update --upcoming --predictions
+          python main.py update --upcoming --predictions --odds
         env:
           FOOTBALL_DATA_ORG_API_KEY: ${{ secrets.FOOTBALL_DATA_ORG_API_KEY }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
       
       - name: Commit database changes
         run: |
@@ -118,6 +120,7 @@ jobs:
         env:
           FOOTBALL_DATA_ORG_API_KEY: ${{ secrets.FOOTBALL_DATA_ORG_API_KEY }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          ODDSPAPI_KEY: ${{ secrets.ODDSPAPI_KEY }}
       
       - name: Commit database changes
         run: |

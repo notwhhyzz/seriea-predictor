@@ -268,7 +268,61 @@ class SerieAScheduler:
             logger.info("Live scores update completed")
         except Exception as e:
             logger.error(f"Live scores update failed: {e}")
-    
+
+    def update_gamdom_odds(self):
+        """Refresh Gamdom odds (via OddsPapi) for upcoming matches"""
+        logger.info("Updating Gamdom odds...")
+        try:
+            from src.fetchers.oddspapi import OddsPapiAPI
+            from src.processing import TeamNameMapper
+            from src.database import Match, Team, get_session
+            from sqlalchemy import and_
+            from datetime import datetime
+
+            api = OddsPapiAPI()
+            if not api.enabled:
+                logger.warning("OddsPapi disabled (no key), skipping odds update")
+                return
+
+            mapper = TeamNameMapper()
+            odds_list = api.get_gamdom_odds()
+            session = get_session()
+            updated = 0
+
+            for o in odds_list:
+                if not o.get("home") or not o.get("away") or not o.get("date"):
+                    continue
+                home = mapper.map_to_canonical(o["home"], "oddspapi")
+                away = mapper.map_to_canonical(o["away"], "oddspapi")
+
+                match = session.query(Match).filter(
+                    and_(
+                        Match.date == o["date"],
+                        Match.home_team.has(name=home),
+                        Match.away_team.has(name=away),
+                    )
+                ).first()
+                if not match:
+                    continue
+
+                for col, val in [
+                    ("odds_home", o.get("odds_1")), ("odds_draw", o.get("odds_x")),
+                    ("odds_away", o.get("odds_2")), ("odds_over_25", o.get("odds_over25")),
+                    ("odds_under_25", o.get("odds_under25")),
+                    ("odds_btts_yes", o.get("odds_btts_yes")), ("odds_btts_no", o.get("odds_btts_no")),
+                ]:
+                    if val:
+                        setattr(match, col, val)
+                match.odds_source = "gamdom"
+                match.odds_updated_at = datetime.utcnow()
+                updated += 1
+
+            session.commit()
+            session.close()
+            logger.info(f"Gamdom odds update completed: {updated} matches")
+        except Exception as e:
+            logger.error(f"Gamdom odds update failed: {e}")
+
     def retrain_models_weekly(self):
         """Weekly model retraining with full historical data"""
         logger.info("Weekly model retraining...")
@@ -357,7 +411,15 @@ class SerieAScheduler:
             id='weekly_retrain',
             max_instances=1
         )
-        
+
+        # Gamdom odds refresh (default every 30 min)
+        self.scheduler.add_job(
+            self.update_gamdom_odds,
+            CronTrigger.from_crontab(self.scheduler_config.get("update_odds_30m", "*/30 * * * *")),
+            id='odds_update',
+            max_instances=1
+        )
+
         logger.info("Scheduler started")
         self.scheduler.start()
 
@@ -371,6 +433,7 @@ def run_once(job_name: str):
         'predictions': scheduler.update_predictions,
         'live': scheduler.update_live_scores,
         'retrain': scheduler.retrain_models_weekly,
+        'odds': scheduler.update_gamdom_odds,
     }
     if job_name in jobs:
         jobs[job_name]()
