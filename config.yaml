@@ -73,6 +73,6 @@ dashboard:
 # Scheduler
 scheduler:
   enabled: true
-  update_historical_daily: "02:00"  # UTC
+  update_historical_daily: "0 2 * * *"  # UTC
   update_upcoming_6h: "*/6 * * * *"
   update_live_15m: "*/15 * * * *"
