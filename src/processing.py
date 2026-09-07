@@ -1,6 +1,7 @@
 """Data processing: merging sources, feature engineering, team mapping"""
 import pandas as pd
 import numpy as np
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 from src.database import Team, Match, get_session, init_db

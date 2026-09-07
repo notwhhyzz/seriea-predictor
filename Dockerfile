@@ -2,14 +2,14 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps (build essentials for scipy/sklearn)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir streamlit watchdog
+
+# Install deps then remove build tools in the SAME layer to keep image small
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir streamlit watchdog \
+    && apt-get purge -y --auto-remove build-essential \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
 
 COPY . .
 
