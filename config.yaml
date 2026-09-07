@@ -1,0 +1,78 @@
+# Serie A Predictor Configuration
+
+# Data Sources
+data_sources:
+  football_data_co_uk:
+    base_url: "https://www.football-data.co.uk/mmz4281"
+    enabled: true
+    seasons: ["2425", "2324", "2223", "2122", "2021", "1920", "1819", "1718", "1617", "1516"]
+    rate_limit_seconds: 2
+
+  datahub_io:
+    base_url: "https://datahub.io/football/italian-serie-a/_r"
+    enabled: true
+    # Auto-discovers all seasons from 1993/94 to present
+
+  football_data_org:
+    base_url: "https://api.football-data.org/v4"
+    competition_code: "SA"
+    enabled: true
+    api_key_env: "FOOTBALL_DATA_ORG_API_KEY"
+    rate_limit_per_minute: 10
+
+  api_football:
+    base_url: "https://v3.football.api-sports.io"
+    league_id: 135  # Serie A
+    enabled: true
+    api_key_env: "API_FOOTBALL_KEY"
+    rate_limit_per_day: 100
+
+  fbref:
+    base_url: "https://fbref.com"
+    competition_id: 11  # Serie A
+    enabled: true
+    rate_limit_seconds: 5
+    use_selenium: false  # Set true if needed for JS-rendered tables
+
+# Database
+database:
+  path: "data/seriea.db"
+  echo: false
+
+# Models
+models:
+  poisson:
+    enabled: true
+    min_matches_for_form: 6
+    home_advantage_factor: 1.0
+
+  dixon_coles:
+    enabled: true
+    rho: 0.13
+    time_decay: 0.001
+
+  elo:
+    enabled: true
+    k_factor: 20
+    home_advantage: 65
+    initial_rating: 1500
+
+# Prediction
+prediction:
+  upcoming_matches_days: 14
+  min_confidence_threshold: 0.15
+  output_probabilities: ["1", "X", "2", "Over 2.5", "Under 2.5", "BTTS Yes", "BTTS No"]
+
+# Dashboard
+dashboard:
+  title: "Serie A Predictor"
+  theme: "light"
+  port: 8501
+  auto_refresh_minutes: 60
+
+# Scheduler
+scheduler:
+  enabled: true
+  update_historical_daily: "02:00"  # UTC
+  update_upcoming_6h: "*/6 * * * *"
+  update_live_15m: "*/15 * * * *"

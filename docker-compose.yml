@@ -1,0 +1,26 @@
+services:
+  dashboard:
+    build: .
+    container_name: seriea-dashboard
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    volumes:
+      - seriea-data:/app/data
+    depends_on:
+      - scheduler
+
+  scheduler:
+    build: .
+    container_name: seriea-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - seriea-data:/app/data
+    command: ["python", "main.py", "scheduler"]
+
+volumes:
+  seriea-data:

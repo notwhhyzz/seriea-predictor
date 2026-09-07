@@ -1,0 +1,140 @@
+name: Serie A Predictor - Daily Updates
+
+on:
+  schedule:
+    # Run daily at 2:00 UTC (4:00 CEST / 3:00 CET)
+    - cron: '0 2 * * *'
+    # Also run every 6 hours for upcoming matches
+    - cron: '0 */6 * * *'
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  update-historical:
+    name: Update Historical Data
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 2 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Update historical data
+        run: python main.py update --historical
+        env:
+          FOOTBALL_DATA_ORG_API_KEY: ${{ secrets.FOOTBALL_DATA_ORG_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      
+      - name: Commit database changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/seriea.db || true
+          git commit -m "chore: update historical data $(date +%Y-%m-%d)" || echo "No changes"
+          git push || echo "Nothing to push"
+
+  update-upcoming:
+    name: Update Upcoming & Predictions
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 */6 * * *' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Update upcoming matches and predictions
+        run: |
+          python main.py update --upcoming --predictions
+        env:
+          FOOTBALL_DATA_ORG_API_KEY: ${{ secrets.FOOTBALL_DATA_ORG_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      
+      - name: Commit database changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/seriea.db || true
+          git commit -m "chore: update upcoming & predictions $(date +%Y-%m-%d %H:%M)" || echo "No changes"
+          git push || echo "Nothing to push"
+
+  weekly-retrain:
+    name: Weekly Model Retrain
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 3 * * 0' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Retrain models
+        run: python main.py update --retrain
+        env:
+          FOOTBALL_DATA_ORG_API_KEY: ${{ secrets.FOOTBALL_DATA_ORG_API_KEY }}
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+      
+      - name: Commit database changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git.config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/seriea.db || true
+          git commit -m "chore: weekly model retrain $(date +%Y-%m-%d)" || echo "No changes"
+          git push || echo "Nothing to push"
+
+  deploy-dashboard:
+    name: Deploy to Streamlit Cloud
+    runs-on: ubuntu-latest
+    needs: [update-upcoming]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      # Streamlit Cloud auto-deploys from main branch
+      # This job just ensures the workflow passes
+      - name: Verify dashboard
+        run: echo "Dashboard will auto-deploy on push to main"
