@@ -19,6 +19,8 @@ class OddsPapiAPI:
     MARKET_1X2 = "101"    # Full Time Result: outcomes 1 / X / 2
     MARKET_BTTS = "104"   # Both Teams To Score: outcomes Yes / No
     MARKET_OU25 = "1010"  # Over Under 2.5: outcomes Over / Under
+    MARKET_DC = "101902"  # Double Chance FT: outcomes 1X / 12 / X2 (2X)
+    MARKET_SCORER = "10730"  # Anytime Goal Scorer: players dict {id: {playerName, price, active}}
 
     def __init__(self, config_path: str = "config.yaml"):
         with open(config_path) as f:
@@ -45,8 +47,18 @@ class OddsPapiAPI:
         response.raise_for_status()
         return response.json()
 
+    # Known outcome names (stable) — avoids extra /markets calls on quota
+    STATIC_OUTCOMES = {
+        "101": {"101": "1", "102": "X", "103": "2"},
+        "104": {"104": "Yes", "105": "No"},
+        "101902": {"101902": "1X", "101903": "12", "101904": "X2"},
+    }
+
     def _outcome_name(self, market_id: str, outcome_id: str) -> str:
-        """Resolve outcome ID -> name (cached from /v4/markets)."""
+        """Resolve outcome ID -> name (static map first, /v4/markets cached fallback)."""
+        static = self.STATIC_OUTCOMES.get(str(market_id), {})
+        if str(outcome_id) in static:
+            return static[str(outcome_id)]
         if market_id not in self._outcome_names:
             markets = self._get("/markets") or []
             for m in markets:
@@ -77,10 +89,12 @@ class OddsPapiAPI:
         return data if isinstance(data, list) else []
 
     def get_gamdom_odds(self) -> List[Dict]:
-        """Gamdom odds for all Serie A fixtures, parsed to 1X2 / O-U 2.5 / BTTS.
+        """Gamdom odds for all Serie A fixtures: 1X2 / O-U 2.5 / BTTS / DC / scorers.
 
         Returns list of {home, away, date, odds_1, odds_x, odds_2,
-        odds_over25, odds_under25, odds_btts_yes, odds_btts_no}.
+        odds_over25, odds_under25, odds_btts_yes, odds_btts_no,
+        odds_dc_1x, odds_dc_12, odds_dc_x2, scorers: [{player, odds}]}.
+        Outcome '2X' is normalized to 'X2'.
         """
         fixtures = {f["fixtureId"]: f for f in self.get_fixtures()}
         odds_data = self._get("/odds-by-tournaments", {
@@ -98,12 +112,24 @@ class OddsPapiAPI:
                 for oid, node in markets.get(str(market_id), {}).get("outcomes", {}).items():
                     price = self._price(node)
                     if price:
-                        out[self._outcome_name(market_id, oid)] = price
+                        name = self._outcome_name(market_id, oid)
+                        out["X2" if name == "2X" else name] = price
                 return out
 
             m1x2 = market_prices(self.MARKET_1X2)
             mou = market_prices(self.MARKET_OU25)
             mbtts = market_prices(self.MARKET_BTTS)
+            mdc = market_prices(self.MARKET_DC)
+
+            scorers = []
+            for oid, node in markets.get(self.MARKET_SCORER, {}).get("outcomes", {}).items():
+                for pid, p in (node.get("players", {}) or {}).items():
+                    if p.get("active", False) and p.get("price") and p.get("playerName"):
+                        try:
+                            scorers.append({"player": p["playerName"], "odds": float(p["price"])})
+                        except (TypeError, ValueError):
+                            continue
+            scorers.sort(key=lambda s: s["odds"])
 
             start = fixture.get("startTime") or entry.get("startTime")
             try:
@@ -122,6 +148,10 @@ class OddsPapiAPI:
                 "odds_under25": mou.get("Under"),
                 "odds_btts_yes": mbtts.get("Yes"),
                 "odds_btts_no": mbtts.get("No"),
+                "odds_dc_1x": mdc.get("1X"),
+                "odds_dc_12": mdc.get("12"),
+                "odds_dc_x2": mdc.get("X2"),
+                "scorers": scorers[:30],
             })
             time.sleep(0.2)
         return results
@@ -138,7 +168,9 @@ def main():
         print(f"  {o['date']} {o['home']} vs {o['away']}: "
               f"1={o['odds_1']} X={o['odds_x']} 2={o['odds_2']} | "
               f"O2.5={o['odds_over25']} U2.5={o['odds_under25']} | "
-              f"BTTS Y={o['odds_btts_yes']} N={o['odds_btts_no']}")
+              f"BTTS Y={o['odds_btts_yes']} N={o['odds_btts_no']} | "
+              f"DC 1X={o['odds_dc_1x']} 12={o['odds_dc_12']} X2={o['odds_dc_x2']} | "
+              f"scorers={len(o['scorers'])}")
 
 
 if __name__ == "__main__":

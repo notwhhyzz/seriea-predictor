@@ -69,6 +69,10 @@ class Match(Base):
     odds_under_25 = Column(Float)
     odds_btts_yes = Column(Float)
     odds_btts_no = Column(Float)
+    odds_dc_1x = Column(Float)
+    odds_dc_12 = Column(Float)
+    odds_dc_x2 = Column(Float)
+    scorer_odds = Column(JSON)  # [{player, odds}] anytime scorer (Gamdom, active only)
     odds_source = Column(String(50))  # e.g. gamdom, b365
     odds_updated_at = Column(DateTime)
     
@@ -351,6 +355,11 @@ def _ensure_migrated(engine, db_path: str):
             conn.execute(text("ALTER TABLE matches ADD COLUMN odds_source VARCHAR(50)"))
         if existing and "odds_updated_at" not in existing:
             conn.execute(text("ALTER TABLE matches ADD COLUMN odds_updated_at DATETIME"))
+        for col in ("odds_dc_1x", "odds_dc_12", "odds_dc_x2"):
+            if existing and col not in existing:
+                conn.execute(text(f"ALTER TABLE matches ADD COLUMN {col} FLOAT"))
+        if existing and "scorer_odds" not in existing:
+            conn.execute(text("ALTER TABLE matches ADD COLUMN scorer_odds JSON"))
     _migrated_paths.add(db_path)
 
 

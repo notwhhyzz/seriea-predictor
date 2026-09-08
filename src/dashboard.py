@@ -504,6 +504,17 @@ with tab_next:
                                     st.markdown(f"{icon} {txt}")
                             else:
                                 st.caption("Dati giocatori non ancora disponibili per queste squadre (sync in corso).")
+                        st.markdown("**🎯 Marcatori Gamdom (anytime)**")
+                        from src.tracking import match_scorer_board
+                        board = match_scorer_board(match['id'])
+                        if board:
+                            st.dataframe(pd.DataFrame([{
+                                'Giocatore': b['player'], 'Quota': b['odds'],
+                                'Squadra': b['team'] or '—',
+                                'Gol ult. 3': b['goals_l3'] if b['goals_l3'] is not None else '—',
+                            } for b in board]), use_container_width=True, hide_index=True)
+                        else:
+                            st.caption("Mercato marcatori non quotato da Gamdom per questo match.")
                     
                     st.divider()
 
@@ -731,10 +742,15 @@ with tab_hist:
 
 with tab_slips:
     st.markdown("## 🧾 Bet Slips — schedine tracciate")
-    st.caption("Suggerite dal tool su base edge Kelly. Solo tracking: lo stato si aggiorna da solo a fine partite.")
+    st.caption("Solo tracking: lo stato si aggiorna da solo a fine partite. I mercati MARCATORE sono sperimentali.")
     from src.tracking import current_edges, kelly_stake, create_slip, get_slips, slip_summary
 
-    edges = current_edges(min_edge=0.03)
+    strat = st.radio("Strategia slip", ["🎯 Massima probabilità (sicurezza)", "⚡ Massimo edge (valore)"],
+                     horizontal=True, key="slip_strat")
+    min_edge = st.select_slider("Edge minimo gambe", options=[0.0, 0.02, 0.03, 0.05, 0.08],
+                                value=0.0 if strat.startswith("🎯") else 0.03, key="slip_edge",
+                                format_func=lambda v: f"{v:.0%}")
+    edges = current_edges(min_edge=min_edge)
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         n_legs = st.slider("Gambe multipla", 2, 5, 3, key="slip_n")
@@ -744,11 +760,24 @@ with tab_slips:
         st.write("")
         gen = st.button("🎲 Genera slip suggerita", use_container_width=True)
 
+    def pick_legs(pool, n, by_prob: bool):
+        """Top-N legs, max 1 per match (evita correlazioni)."""
+        ordered = sorted(pool, key=lambda e: e['model_prob'] if by_prob else e['edge'], reverse=True)
+        picked, seen = [], set()
+        for e in ordered:
+            if e['match_id'] in seen:
+                continue
+            picked.append(e)
+            seen.add(e['match_id'])
+            if len(picked) == n:
+                break
+        return picked
+
     if gen:
-        if len(edges) < n_legs:
-            st.warning(f"Solo {len(edges)} edge ≥ 3% disponibili, ne servono {n_legs}.")
+        legs = pick_legs(edges, n_legs, by_prob=strat.startswith("🎯"))
+        if len(legs) < n_legs:
+            st.warning(f"Solo {len(legs)} gambe disponibili con edge ≥ {min_edge:.0%}, ne servono {n_legs}.")
         else:
-            legs = edges[:n_legs]
             tot_o, tot_p = 1.0, 1.0
             for leg in legs:
                 tot_o *= leg['odds']
@@ -766,7 +795,7 @@ with tab_slips:
         s3.metric("Edge vs implicita", f"{sugg['combined_prob'] - 1/sugg['total_odds']:+.1%}")
         s4.metric("Stake Kelly/4", f"{sugg['kelly']:.2f}u")
         st.dataframe(pd.DataFrame([{
-            'Match': f"{l['home']} vs {l['away']}", 'Data': l['date'], 'Mercato': l['market'],
+            'Match': f"{l['home']} vs {l['away']}", 'Data': l['date'], 'Mercato': l['market'] + (' 🧪' if l.get('experimental') else ''),
             'Esito': l['selection'], 'Modello': f"{l['model_prob']:.1%}",
             'Quota': l['odds'], 'Edge': f"{l['edge']:+.1%}"} for l in sugg['legs']]),
             use_container_width=True, hide_index=True)
@@ -775,13 +804,14 @@ with tab_slips:
             st.success(f"Slip #{sid} salvata e in tracking.")
             st.session_state.pop('suggested', None)
 
-    st.markdown("### Singole ad alto edge")
+    st.markdown("### Giocate con edge (tutte le quote Gamdom: 1X2, DC, O/U, BTTS, marcatori🧪)")
     if edges:
         top = pd.DataFrame([{
-            'Match': f"{e['home']} vs {e['away']}", 'Mercato': e['market'], 'Esito': e['selection'],
+            'Match': f"{e['home']} vs {e['away']}", 'Mercato': e['market'] + (' 🧪' if e.get('experimental') else ''),
+            'Esito': e['selection'],
             'Modello': f"{e['model_prob']:.1%}", 'Quota': e['odds'],
             'Edge': f"{e['edge']:+.1%}", 'Kelly/4': f"{kelly_stake(e['model_prob'], e['odds']):.2f}u",
-            '_i': i} for i, e in enumerate(edges[:12])])
+            '_i': i} for i, e in enumerate(edges[:15])])
         st.dataframe(top.drop(columns=['_i']), use_container_width=True, hide_index=True)
         pick = st.selectbox("Salva una singola come slip:", [f"#{r['_i']} {r['Match']} — {r['Esito']} @{r['Quota']}" for _, r in top.iterrows()], key="pick_single")
         if st.button("💾 Salva singola", key="save_single"):

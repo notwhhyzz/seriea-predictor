@@ -350,9 +350,13 @@ class SerieAScheduler:
                     ("odds_away", o.get("odds_2")), ("odds_over_25", o.get("odds_over25")),
                     ("odds_under_25", o.get("odds_under25")),
                     ("odds_btts_yes", o.get("odds_btts_yes")), ("odds_btts_no", o.get("odds_btts_no")),
+                    ("odds_dc_1x", o.get("odds_dc_1x")), ("odds_dc_12", o.get("odds_dc_12")),
+                    ("odds_dc_x2", o.get("odds_dc_x2")),
                 ]:
                     if val:
                         setattr(match, col, val)
+                if o.get("scorers"):
+                    match.scorer_odds = o["scorers"]
                 match.odds_source = "gamdom"
                 match.odds_updated_at = datetime.utcnow()
                 updated += 1
@@ -453,10 +457,25 @@ class SerieAScheduler:
                     sel, mkt = leg.get('selection'), leg.get('market')
                     if mkt == '1X2':
                         ok = ({'1': 'H', 'X': 'D', '2': 'A'}.get(sel) == result)
+                    elif mkt == 'DC':
+                        ok = ({'1X': result in ('H', 'D'), '12': result in ('H', 'A'),
+                               'X2': result in ('D', 'A')}.get(sel, False))
                     elif mkt == 'O/U 2.5':
                         ok = ((sel == 'Over 2.5') == (total > 2.5))
                     elif mkt == 'BTTS':
                         ok = ((sel == 'GG Sì') == btts)
+                    elif mkt == 'MARCATORE':
+                        from src.database import Player, PlayerMatch
+                        from sqlalchemy import and_ as _and
+                        pm = None
+                        if leg.get('player'):
+                            pl = session.query(Player).filter(
+                                Player.name == leg['player']).first()
+                            if pl:
+                                pm = session.query(PlayerMatch).filter(
+                                    _and(PlayerMatch.player_id == pl.id,
+                                          PlayerMatch.match_id == match.id)).first()
+                        ok = bool(pm and (pm.goals or 0) > 0)
                     else:
                         ok = False
                     if not ok:
