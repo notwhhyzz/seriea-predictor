@@ -51,13 +51,20 @@ class FootballDataOrgAPI:
         return self._get(f"/competitions/{self.competition_code}")
     
     def get_current_season_matches(self, status: str = None) -> List[Dict]:
-        """Get matches for current season, optionally filtered by status"""
-        params = {"competitions": self.competition_code}
+        """Get matches for current season, optionally filtered by status.
+        Uses the competition endpoint (the generic /matches 'competitions' filter is unreliable)."""
+        comp_info = self.get_competition_info()
+        season = None
+        if comp_info and "currentSeason" in comp_info:
+            season = comp_info["currentSeason"]["startDate"][:4]
+        params = {}
+        if season:
+            params["season"] = season
+        data = self._get(f"/competitions/{self.competition_code}/matches", params)
+        matches = data.get("matches", []) if data else []
         if status:
-            params["status"] = status
-        # Get current season matches
-        data = self._get("/matches", params)
-        return data.get("matches", []) if data else []
+            matches = [m for m in matches if m.get("status") == status]
+        return matches
     
     def get_upcoming_matches(self, days: int = 14) -> List[Dict]:
         """Get upcoming matches in next N days"""
@@ -173,6 +180,10 @@ class APIFootball:
         url = f"{self.base_url}{endpoint}"
         response = requests.get(url, headers=self._headers(), params=params, timeout=30)
         self._request_count += 1
+        try:
+            self._quota_remaining = int(response.headers.get("x-ratelimit-requests-remaining", -1))
+        except (TypeError, ValueError):
+            pass
         
         if response.status_code == 429:
             raise Exception("Rate limited")
@@ -213,6 +224,23 @@ class APIFootball:
     def get_team_statistics(self, team_id: int, season: int = 2024) -> Optional[Dict]:
         data = self._get("/teams/statistics", {"league": self.league_id, "season": season, "team": team_id})
         return data.get("response", {}) if data else {}
+
+    def get_fixture_players(self, fixture_id: int) -> List[Dict]:
+        """Per-player stats (minutes, goals, assists, cards, rating) for a fixture."""
+        data = self._get("/fixtures/players", {"fixture": fixture_id})
+        return data.get("response", []) if data else []
+
+    def get_fixtures_by_date(self, match_date) -> List[Dict]:
+        """All Serie A fixtures for a date (finished or not). Date-based discovery
+        works on free tier where season queries are restricted."""
+        data = self._get("/fixtures", {"date": match_date.isoformat()})
+        resp = data.get("response", []) if data else []
+        return [f for f in resp if f.get("league", {}).get("id") == self.league_id]
+
+    @property
+    def quota_remaining(self) -> Optional[int]:
+        """Last seen daily quota from response headers."""
+        return getattr(self, "_quota_remaining", None)
     
     def get_standings(self, season: int = 2024) -> List[Dict]:
         data = self._get("/standings", {"league": self.league_id, "season": season})

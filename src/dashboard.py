@@ -480,9 +480,14 @@ with tab_next:
                         with detail_col1:
                             st.plotly_chart(plot_match_prediction(match), use_container_width=True)
                         with detail_col2:
-                            st.markdown("**Probabilità Risultati Esatti**")
-                            # Would need model to provide this
-                            st.caption("Top scorelines from best model")
+                            from src.insights import match_insights
+                            st.markdown("**💡 Insight pre-match**")
+                            bullets = match_insights(match['home_team'], match['away_team'])
+                            if bullets:
+                                for icon, txt in bullets:
+                                    st.markdown(f"{icon} {txt}")
+                            else:
+                                st.caption("Dati giocatori non ancora disponibili per queste squadre (sync in corso).")
                     
                     st.divider()
 
@@ -529,6 +534,56 @@ with tab_team:
     selected_team = st.selectbox("Seleziona squadra", teams)
     
     if selected_team:
+        from src.insights import player_status, in_form_players, season_scorers, player_match_log
+
+        st.markdown("### 🚫 Disponibilità & 🔥 Forma")
+        ps = player_status(selected_team)
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            st.markdown("**Squalificati**")
+            if ps['suspended']:
+                for s in ps['suspended']:
+                    st.markdown(f"🚫 {s['player']} <span class='pill pill-lost'>OUT</span> ({s['reason']})", unsafe_allow_html=True)
+            else:
+                st.caption("Nessuno" if ps['cards'] else "Dati in arrivo (sync giocatori in corso)")
+        with a2:
+            st.markdown("**Diffidati** (1 giallo dalla squalifica)")
+            if ps['warned']:
+                for w in ps['warned']:
+                    st.markdown(f"⚠️ {w['player']} ({w['yellow']} 🟨)")
+            else:
+                st.caption("Nessuno")
+        with a3:
+            st.markdown("**In forma**")
+            form_p = in_form_players(selected_team)
+            if form_p:
+                for f in form_p[:4]:
+                    detail = f"striscia {f['streak']}🔥" if f['streak'] >= 2 else f"{f['goals_l3']} gol/3"
+                    st.markdown(f"🔥 **{f['player']}** — {detail}" + (f" — rating {f['avg_rating_l5']}" if f['avg_rating_l5'] else ""))
+            else:
+                st.caption("—")
+
+        b1, b2 = st.columns(2)
+        with b1:
+            st.markdown("### 🎯 Cannonieri stagionali")
+            scorers = season_scorers(selected_team)
+            if scorers:
+                st.dataframe(pd.DataFrame(scorers), use_container_width=True, hide_index=True)
+            else:
+                st.caption("Dati in arrivo")
+        with b2:
+            st.markdown("### 🧍 Scheda giocatore")
+            all_players = sorted({c['player'] for c in ps['cards']} | {f['player'] for f in form_p} | {s['player'] for s in scorers})
+            if all_players:
+                sel_player = st.selectbox("Giocatore", all_players, key=f"player_{selected_team}")
+                plog = player_match_log(sel_player, selected_team)
+                if not plog.empty:
+                    st.dataframe(plog, use_container_width=True, hide_index=True)
+                else:
+                    st.caption("Nessun dato")
+            else:
+                st.caption("Dati in arrivo")
+
         col1, col2 = st.columns(2)
         
         with col1:

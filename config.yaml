@@ -64,6 +64,12 @@ models:
     home_advantage: 65
     initial_rating: 1500
 
+# Player stats sync (API-Football, quota-aware: 1 call/day-list + 1/fixture)
+players:
+  max_per_run: 30
+  lookback_days: 7
+  min_quota_reserve: 8
+
 # Prediction
 prediction:
   upcoming_matches_days: 14
@@ -84,3 +90,4 @@ scheduler:
   update_upcoming_6h: "*/6 * * * *"
   update_live_15m: "*/15 * * * *"
   update_odds_30m: "*/30 * * * *"
+  update_players_daily: "30 3 * * *"

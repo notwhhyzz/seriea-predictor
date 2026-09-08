@@ -76,6 +76,8 @@ def cmd_update(args):
         run_once('live')
     if args.odds:
         run_once('odds')
+    if args.players:
+        run_once('players')
     if args.retrain:
         run_once('retrain')
 
@@ -197,6 +199,7 @@ def main():
     update_parser.add_argument('--predictions', action='store_true', help='Update predictions')
     update_parser.add_argument('--live', action='store_true', help='Update live scores')
     update_parser.add_argument('--odds', action='store_true', help='Update Gamdom odds via OddsPapi')
+    update_parser.add_argument('--players', action='store_true', help='Sync per-player match stats')
     update_parser.add_argument('--retrain', action='store_true', help='Retrain models')
     
     # predict

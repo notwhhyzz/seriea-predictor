@@ -279,6 +279,7 @@ class BetSlip(Base):
     """Tracked bet slip: suggested or manual, auto-settled from results."""
     __tablename__ = "bet_slips"
     id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     name = Column(String(200))
     legs = Column(JSON)  # [{match_id, date, home, away, market, selection, model_prob, odds}]
@@ -291,6 +292,35 @@ class BetSlip(Base):
 
     __table_args__ = (
         Index('idx_slip_status', 'status'),
+    )
+
+
+class PlayerMatch(Base):
+    """Per-player stats for a single match (from API-Football /fixtures/players)."""
+    __tablename__ = "player_match"
+    id = Column(Integer, primary_key=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=False)
+    match_id = Column(Integer, ForeignKey("matches.id"), nullable=False)
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
+    season = Column(String(10))
+
+    minutes = Column(Integer, default=0)
+    position = Column(String(10))
+    rating = Column(Float)
+    goals = Column(Integer, default=0)
+    assists = Column(Integer, default=0)
+    yellow = Column(Integer, default=0)
+    red = Column(Integer, default=0)
+    starter = Column(Boolean, default=False)
+
+    player = relationship("Player")
+    match = relationship("Match")
+    team = relationship("Team")
+
+    __table_args__ = (
+        UniqueConstraint('player_id', 'match_id', name='unique_player_match'),
+        Index('idx_pm_team_season', 'team_id', 'season'),
+        Index('idx_pm_match', 'match_id'),
     )
 
 

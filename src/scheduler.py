@@ -226,52 +226,86 @@ class SerieAScheduler:
             logger.error(f"Prediction update failed: {e}")
     
     def update_live_scores(self):
-        """Every 15 minutes during match days: update live scores"""
+        """Every 15 minutes: sync today's scores + statuses (incl. FT transitions)."""
         logger.info("Checking live scores...")
         try:
-            from src.fetchers.api_football import FootballDataOrgAPI, APIFootball
+            from src.fetchers.api_football import FootballDataOrgAPI
             from src.database import Match, get_session
             from sqlalchemy import and_
-            from datetime import date
-            
-            # Only run on match days (check if any match today)
+            from datetime import date, timedelta
+
             session = get_session()
+            # Window covers today + previous 3 days: catches matches missed
+            # by earlier runs (downtime) so they still become FINISHED.
             today_matches = session.query(Match).filter(
                 and_(
-                    Match.date == date.today(),
-                    Match.status.in_(['LIVE', 'IN_PLAY', 'SCHEDULED'])
+                    Match.date >= date.today() - timedelta(days=3),
+                    Match.date <= date.today(),
+                    Match.status.in_(['LIVE', 'IN_PLAY', 'PAUSED', 'TIMED', 'SCHEDULED', 'NS'])
                 )
             ).all()
-            
+
             if not today_matches:
                 logger.info("No matches today, skipping live update")
                 session.close()
                 return
-            
-            # Update from football-data.org
-            api1 = FootballDataOrgAPI()
-            if api1.enabled:
-                live_matches = api1.get_current_season_matches(status='LIVE')
-                for match_data in live_matches:
-                    std = api1.standardize_match(match_data)
-                    # Find and update match
-                    match = session.query(Match).filter(
-                        and_(
-                            Match.date == std['date'],
-                            Match.home_team.has(name=std['home_team']),
-                            Match.away_team.has(name=std['away_team'])
-                        )
-                    ).first()
-                    if match:
-                        match.home_goals = std['home_goals']
-                        match.away_goals = std['away_goals']
-                        match.home_goals_ht = std['home_goals_ht']
-                        match.away_goals_ht = std['away_goals_ht']
-                        match.status = std['status']
-            
+
+            api = FootballDataOrgAPI()
+            if not api.enabled:
+                logger.warning("football-data.org disabled, skipping live update")
+                session.close()
+                return
+
+            # Whole-season fetch (1 call), filter today in Python: catches FT transitions
+            season_matches = api.get_current_season_matches()
+            window_start = date.today() - timedelta(days=3)
+            by_teams = {}
+            for m in season_matches:
+                try:
+                    std = api.standardize_match(m)
+                except Exception:
+                    continue
+                if std.get('date') and window_start <= std['date'] <= date.today():
+                    by_teams[(std['date'], std['home_team'], std['away_team'])] = std
+
+            STATUS_MAP = {'FINISHED': 'FINISHED', 'IN_PLAY': 'LIVE', 'PAUSED': 'LIVE',
+                          'TIMED': 'TIMED', 'SCHEDULED': 'SCHEDULED',
+                          'POSTPONED': 'POSTPONED', 'SUSPENDED': 'POSTPONED', 'CANCELLED': 'CANCELLED'}
+            from src.processing import TeamNameMapper
+            mapper = TeamNameMapper()
+            updated = 0
+            for m in today_matches:
+                key = (m.date, m.home_team.name, m.away_team.name)
+                std = by_teams.get(key)
+                if not std:
+                    # fallback: map API names to canonical
+                    for (d, h, a), s in by_teams.items():
+                        if (d == m.date
+                                and mapper.map_to_canonical(h, 'football-data.org') == m.home_team.name
+                                and mapper.map_to_canonical(a, 'football-data.org') == m.away_team.name):
+                            std = s
+                            break
+                if not std:
+                    continue
+                if std.get('home_goals') is not None:
+                    m.home_goals = std['home_goals']
+                    m.away_goals = std['away_goals']
+                if std.get('home_goals_ht') is not None:
+                    m.home_goals_ht = std['home_goals_ht']
+                    m.away_goals_ht = std['away_goals_ht']
+                new_status = STATUS_MAP.get(std.get('status'), m.status)
+                if new_status != m.status:
+                    m.status = new_status
+                    if new_status == 'FINISHED':
+                        m.result = ('H' if m.home_goals > m.away_goals
+                                    else ('A' if m.home_goals < m.away_goals else 'D'))
+                updated += 1
+
             session.commit()
             session.close()
-            logger.info("Live scores update completed")
+            logger.info(f"Live scores update completed: {updated} matches synced")
+            # Newly finished matches feed history -> settle logs/slips
+            self.settle_logs_and_slips()
         except Exception as e:
             logger.error(f"Live scores update failed: {e}")
 
@@ -441,6 +475,165 @@ class SerieAScheduler:
             if own_session:
                 session.close()
 
+    @staticmethod
+    def _int_or_zero(v):
+        try:
+            return int(v) if v is not None else 0
+        except (TypeError, ValueError):
+            return 0
+
+    @classmethod
+    def store_fixture_players(cls, session, match, entries, mapper):
+        """Parse /fixtures/players response into Player + PlayerMatch rows.
+        Returns number of player-match rows stored. Pure logic, no API calls."""
+        from src.database import Player, PlayerMatch
+        from sqlalchemy import and_
+
+        stored = 0
+        for entry in entries:
+            canon = mapper.map_to_canonical((entry.get("team") or {}).get("name", ""), "api-football")
+            if canon == match.home_team.name:
+                team_id = match.home_team_id
+            elif canon == match.away_team.name:
+                team_id = match.away_team_id
+            else:
+                continue
+            for p in entry.get("players", []):
+                info, stats_list = p.get("player", {}), p.get("statistics", [])
+                if not info.get("id") or not stats_list:
+                    continue
+                st = stats_list[0]
+                g = st.get("games", {})
+                player = session.query(Player).filter(
+                    Player.api_football_id == info["id"]).first()
+                if not player:
+                    player = Player(name=info.get("name", "?"), api_football_id=info["id"])
+                    session.add(player)
+                    session.flush()
+                player.team_id = team_id
+                player.position = (g.get("position") or "")[:20]
+                rating = None
+                try:
+                    rating = float(g["rating"]) if g.get("rating") else None
+                except (TypeError, ValueError):
+                    pass
+                if not session.query(PlayerMatch).filter(
+                        and_(PlayerMatch.player_id == player.id,
+                             PlayerMatch.match_id == match.id)).first():
+                    session.add(PlayerMatch(
+                        player_id=player.id, match_id=match.id, team_id=team_id,
+                        season=match.season, minutes=cls._int_or_zero(g.get("minutes")),
+                        position=(g.get("position") or "")[:10], rating=rating,
+                        goals=cls._int_or_zero((st.get("goals") or {}).get("total")),
+                        assists=cls._int_or_zero((st.get("goals") or {}).get("assists")),
+                        yellow=cls._int_or_zero((st.get("cards") or {}).get("yellow")),
+                        red=cls._int_or_zero((st.get("cards") or {}).get("red")),
+                        starter=not g.get("substitute", False),
+                    ))
+                    stored += 1
+        return stored
+
+    def sync_player_stats(self, max_fixtures: int = None):
+        """Backfill per-player match stats (goals/assists/cards/minutes/rating).
+
+        Date-based discovery (works on free tier): for each recent date with
+        unfinished business, 1 call lists the day's fixtures + 1 call per
+        fixture for player stats. Stops early when daily quota runs low.
+        """
+        logger.info("Syncing player stats...")
+        try:
+            from src.fetchers.api_football import APIFootball
+            from src.processing import TeamNameMapper
+            from src.database import Match, Team, Player, PlayerMatch, get_session
+            from sqlalchemy import and_, exists
+            from datetime import date, timedelta
+
+            with open("config.yaml") as f:
+                import yaml
+                cfg = yaml.safe_load(f).get("players", {})
+            max_fixtures = max_fixtures or cfg.get("max_per_run", 30)
+            lookback = cfg.get("lookback_days", 7)
+            min_quota = cfg.get("min_quota_reserve", 8)
+
+            api = APIFootball()
+            if not api.enabled:
+                logger.warning("API-Football disabled, skipping player sync")
+                return
+
+            mapper = TeamNameMapper()
+            session = get_session()
+
+            # Dates needing work: unfinished matches up to today + recently finished
+            # without stats yet (backfill window).
+            cutoff = date.today() - timedelta(days=lookback)
+            pending = (
+                session.query(Match)
+                .filter(and_(
+                    Match.date >= cutoff,
+                    Match.date <= date.today(),
+                    Match.status.in_(['FINISHED', 'TIMED', 'SCHEDULED', 'LIVE']),
+                ))
+                .order_by(Match.date.desc())
+                .all()
+            )
+            dates = sorted({m.date for m in pending
+                            if m.status != 'FINISHED'
+                            or not session.query(exists().where(PlayerMatch.match_id == m.id)).scalar()},
+                           reverse=True)
+            logger.info(f"Player sync: {len(dates)} dates to check (lookback {lookback}d)")
+
+            def quota_ok():
+                q = api.quota_remaining
+                return q is None or q == -1 or q >= min_quota
+
+            synced = skipped = 0
+            for d in dates:
+                if synced >= max_fixtures or not quota_ok():
+                    break
+                try:
+                    day_fixtures = api.get_fixtures_by_date(d)
+                except Exception as e:
+                    logger.warning(f"Fixture list failed for {d}: {e}")
+                    continue
+                for fx in day_fixtures:
+                    if synced >= max_fixtures or not quota_ok():
+                        break
+                    if (fx.get("fixture", {}).get("status", {}).get("short") != "FT"):
+                        continue
+                    teams = fx.get("teams", {})
+                    h = mapper.map_to_canonical(teams.get("home", {}).get("name", ""), "api-football")
+                    a = mapper.map_to_canonical(teams.get("away", {}).get("name", ""), "api-football")
+                    match = session.query(Match).filter(
+                        and_(Match.date == d,
+                             Match.home_team.has(name=h),
+                             Match.away_team.has(name=a))).first()
+                    if not match or session.query(
+                            exists().where(PlayerMatch.match_id == match.id)).scalar():
+                        continue
+                    try:
+                        entries = api.get_fixture_players(fx["fixture"]["id"])
+                    except Exception as e:
+                        logger.warning(f"Players failed for fixture {fx['fixture']['id']}: {e}")
+                        continue
+                    if not entries:
+                        skipped += 1
+                        continue
+                    try:
+                        stored = self.store_fixture_players(session, match, entries, mapper)
+                        session.commit()
+                        if stored:
+                            synced += 1
+                        else:
+                            skipped += 1
+                    except Exception as e:
+                        session.rollback()
+                        logger.warning(f"Player sync commit failed for match {match.id}: {e}")
+
+            session.close()
+            logger.info(f"Player stats synced for {synced} fixtures, quota left: {api.quota_remaining}")
+        except Exception as e:
+            logger.error(f"Player sync failed: {e}")
+
     def retrain_models_weekly(self):
         """Weekly model retraining with full historical data"""
         logger.info("Weekly model retraining...")
@@ -538,6 +731,14 @@ class SerieAScheduler:
             max_instances=1
         )
 
+        # Player stats sync (daily, quota-aware)
+        self.scheduler.add_job(
+            self.sync_player_stats,
+            CronTrigger.from_crontab(self.scheduler_config.get("update_players_daily", "30 3 * * *")),
+            id='players_update',
+            max_instances=1
+        )
+
         logger.info("Scheduler started")
         self.scheduler.start()
 
@@ -553,6 +754,7 @@ def run_once(job_name: str):
         'retrain': scheduler.retrain_models_weekly,
         'odds': scheduler.update_gamdom_odds,
         'settle': scheduler.settle_logs_and_slips,
+        'players': scheduler.sync_player_stats,
     }
     if job_name in jobs:
         jobs[job_name]()
