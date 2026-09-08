@@ -411,7 +411,8 @@ with tab_dash:
             with st.expander(f"{match['date'].strftime('%a %d/%m')} - {match['home_team']} vs {match['away_team']}"):
                 col1, col2 = st.columns([2, 1])
                 with col1:
-                    st.plotly_chart(plot_match_prediction(match), use_container_width=True)
+                    st.plotly_chart(plot_match_prediction(match), use_container_width=True,
+                                    key=f"dash_pie_{match['id']}")
                 with col2:
                     st.markdown("**Quote (se disponibili)**")
                     if pd.notna(match['odds_home']):
@@ -466,19 +467,24 @@ with tab_next:
                             st.caption(f"Giornata {int(match['matchday'])}")
                     
                     with col2:
-                        st.metric("1", f"{match['pred_home']:.1%}" if pd.notna(match['pred_home']) else "—")
+                        st.metric("1", f"{match['pred_home']:.1%}" if pd.notna(match['pred_home']) else "—",
+                                  key=f"m1_{match['id']}")
                     with col3:
-                        st.metric("X", f"{match['pred_draw']:.1%}" if pd.notna(match['pred_draw']) else "—")
+                        st.metric("X", f"{match['pred_draw']:.1%}" if pd.notna(match['pred_draw']) else "—",
+                                  key=f"mx_{match['id']}")
                     with col4:
-                        st.metric("2", f"{match['pred_away']:.1%}" if pd.notna(match['pred_away']) else "—")
+                        st.metric("2", f"{match['pred_away']:.1%}" if pd.notna(match['pred_away']) else "—",
+                                  key=f"m2_{match['id']}")
                     with col5:
-                        st.metric("Ov 2.5", f"{match['pred_over_25']:.1%}" if pd.notna(match['pred_over_25']) else "—")
+                        st.metric("Ov 2.5", f"{match['pred_over_25']:.1%}" if pd.notna(match['pred_over_25']) else "—",
+                                  key=f"mou_{match['id']}")
                     
                     # Detail expander
                     with st.expander("Dettagli →"):
                         detail_col1, detail_col2 = st.columns(2)
                         with detail_col1:
-                            st.plotly_chart(plot_match_prediction(match), use_container_width=True)
+                            st.plotly_chart(plot_match_prediction(match), use_container_width=True,
+                                            key=f"next_pie_{match['id']}")
                         with detail_col2:
                             from src.insights import match_insights
                             st.markdown("**💡 Insight pre-match**")
@@ -522,7 +528,7 @@ with tab_table:
                  color_continuous_scale='RdYlGn',
                  title='Punti per Squadra')
     fig.update_layout(xaxis_tickangle=-45, height=500)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key='table_bar')
 
 with tab_team:
     st.title("Analisi Squadra")
@@ -590,7 +596,7 @@ with tab_team:
             st.subheader("Ultime 5 partite")
             form = get_team_form(selected_team, 5)
             if not form.empty:
-                st.plotly_chart(plot_team_form(form, selected_team), use_container_width=True)
+                st.plotly_chart(plot_team_form(form, selected_team), use_container_width=True, key=f"team_form_{selected_team}")
                 st.dataframe(form[['date', 'venue', 'opponent', 'goals_for', 'goals_against', 'result']], 
                            use_container_width=True, hide_index=True)
             else:
@@ -663,7 +669,7 @@ with tab_value:
         fig = px.bar(chart_df, x='label', y='_edge', color='Mercato',
                      title='Top edge modello vs Gamdom')
         fig.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key='value_bar')
     else:
         st.info("Nessun edge > 5% al momento. Se le quote mancano, premi 'Aggiorna quote Gamdom' in Impostazioni.")
 
@@ -696,7 +702,7 @@ with tab_hist:
                                      line=dict(color='#60A5FA', dash='dash')))
             fig.update_layout(title='Calibration — confidenza modello vs realtà (n = n. casi)',
                               yaxis=dict(tickformat='.0%', range=[0, 1]), height=340)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key='hist_calibration')
         else:
             st.info("La calibration apparirà quando almeno un pronostico sarà chiuso.")
 
