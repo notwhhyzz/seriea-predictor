@@ -49,6 +49,14 @@ st.markdown("""
   [data-testid="stMetricLabel"] { color: #9AA4B2 !important; font-size: 0.78rem !important; }
   [data-testid="stMetricValue"] { font-weight: 800 !important; }
 
+  /* Stat boxes (loop-safe alternative to st.metric) */
+  .stat { background: #151A23; border: 1px solid #232B38; border-radius: 12px;
+          padding: 10px 14px; text-align: center; }
+  .stat .stat-label { color: #9AA4B2; font-size: 0.75rem; font-weight: 600; }
+  .stat .stat-value { font-size: 1.35rem; font-weight: 800; margin-top: 2px; }
+  [data-testid="stMetricLabel"] { color: #9AA4B2 !important; font-size: 0.78rem !important; }
+  [data-testid="stMetricValue"] { font-weight: 800 !important; }
+
   /* Expanders + buttons */
   [data-testid="stExpander"] { border: 1px solid #232B38; border-radius: 12px; }
   .stButton > button { border-radius: 10px; font-weight: 600; }
@@ -354,6 +362,12 @@ def plot_team_form(form_df, team_name):
     return fig
 
 
+def stat_box(label: str, value: str):
+    """Loop-safe stat display (st.metric has no key support on this version)."""
+    st.markdown(f"<div class='stat'><div class='stat-label'>{label}</div>"
+                f"<div class='stat-value'>{value}</div></div>", unsafe_allow_html=True)
+
+
 # Sidebar (status only — navigation moved to top tabs)
 st.sidebar.title("⚽ Serie A Predictor")
 st.sidebar.caption(f"Data updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
@@ -467,17 +481,13 @@ with tab_next:
                             st.caption(f"Giornata {int(match['matchday'])}")
                     
                     with col2:
-                        st.metric("1", f"{match['pred_home']:.1%}" if pd.notna(match['pred_home']) else "—",
-                                  key=f"m1_{match['id']}")
+                        stat_box("1", f"{match['pred_home']:.1%}" if pd.notna(match['pred_home']) else "—")
                     with col3:
-                        st.metric("X", f"{match['pred_draw']:.1%}" if pd.notna(match['pred_draw']) else "—",
-                                  key=f"mx_{match['id']}")
+                        stat_box("X", f"{match['pred_draw']:.1%}" if pd.notna(match['pred_draw']) else "—")
                     with col4:
-                        st.metric("2", f"{match['pred_away']:.1%}" if pd.notna(match['pred_away']) else "—",
-                                  key=f"m2_{match['id']}")
+                        stat_box("2", f"{match['pred_away']:.1%}" if pd.notna(match['pred_away']) else "—")
                     with col5:
-                        st.metric("Ov 2.5", f"{match['pred_over_25']:.1%}" if pd.notna(match['pred_over_25']) else "—",
-                                  key=f"mou_{match['id']}")
+                        stat_box("Ov 2.5", f"{match['pred_over_25']:.1%}" if pd.notna(match['pred_over_25']) else "—")
                     
                     # Detail expander
                     with st.expander("Dettagli →"):
