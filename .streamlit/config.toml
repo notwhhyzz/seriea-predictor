@@ -5,3 +5,11 @@ headless = true
 port = 8501
 enableCORS = false
 enableXsrfProtection = false
+
+[theme]
+base = "dark"
+primaryColor = "#22C55E"
+backgroundColor = "#0B0E14"
+secondaryBackgroundColor = "#151A23"
+textColor = "#E8EDF3"
+font = "sans serif"

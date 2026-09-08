@@ -157,6 +157,8 @@ class SerieAScheduler:
             session.close()
             processor.close()
             logger.info("Upcoming matches update completed")
+            # Ensure fresh matches get predictions + snapshots
+            self.update_predictions()
         except Exception as e:
             logger.error(f"Upcoming matches update failed: {e}")
     
@@ -213,7 +215,11 @@ class SerieAScheduler:
                     
                     session.commit()
                     logger.info(f"Generated predictions for {len(predictions)} matches")
-            
+
+            # Snapshot predictions + settle finished logs/slips
+            self.log_prediction_snapshots(session)
+            self.settle_logs_and_slips(session)
+
             session.close()
             processor.close()
         except Exception as e:
@@ -320,8 +326,120 @@ class SerieAScheduler:
             session.commit()
             session.close()
             logger.info(f"Gamdom odds update completed: {updated} matches")
+            # Refresh today's snapshots with new odds + settle anything finished
+            self.log_prediction_snapshots()
+            self.settle_logs_and_slips()
         except Exception as e:
             logger.error(f"Gamdom odds update failed: {e}")
+
+    def log_prediction_snapshots(self, session=None):
+        """Snapshot today's predictions+odds for upcoming matches (upsert per match+day)."""
+        from src.database import Match, PredictionLog, get_session
+        from sqlalchemy import and_
+        from datetime import date, datetime
+
+        own_session = session is None
+        session = session or get_session()
+        try:
+            today = date.today()
+            matches = session.query(Match).filter(
+                and_(
+                    Match.date >= today,
+                    Match.status.in_(['SCHEDULED', 'TIMED']),
+                    Match.pred_home_win.isnot(None),
+                )
+            ).all()
+            for m in matches:
+                log = session.query(PredictionLog).filter(
+                    and_(PredictionLog.match_id == m.id, PredictionLog.log_date == today)
+                ).first()
+                if not log:
+                    log = PredictionLog(match_id=m.id, log_date=today)
+                    session.add(log)
+                log.recorded_at = datetime.utcnow()
+                log.p_home, log.p_draw, log.p_away = m.pred_home_win, m.pred_draw, m.pred_away_win
+                log.p_over25, log.p_under25 = m.pred_over_25, m.pred_under_25
+                log.p_btts_yes, log.p_btts_no = m.pred_btts_yes, m.pred_btts_no
+                log.odds_1, log.odds_x, log.odds_2 = m.odds_home, m.odds_draw, m.odds_away
+                log.odds_over25, log.odds_under25 = m.odds_over_25, m.odds_under_25
+                log.odds_btts_yes, log.odds_btts_no = m.odds_btts_yes, m.odds_btts_no
+                log.odds_source = m.odds_source
+            session.commit()
+            logger.info(f"Logged prediction snapshots for {len(matches)} matches")
+        finally:
+            if own_session:
+                session.close()
+
+    @staticmethod
+    def _settle_match_result(match):
+        """Return (result, total_goals, btts) or None if not finished."""
+        if match.status != 'FINISHED' or match.home_goals is None or match.away_goals is None:
+            return None
+        hg, ag = match.home_goals, match.away_goals
+        result = 'H' if hg > ag else ('A' if hg < ag else 'D')
+        return result, hg + ag, (hg > 0 and ag > 0)
+
+    def settle_logs_and_slips(self, session=None):
+        """Backfill results on prediction logs + settle open bet slips."""
+        from src.database import Match, PredictionLog, BetSlip, get_session
+        from datetime import datetime
+
+        own_session = session is None
+        session = session or get_session()
+        try:
+            settled_logs = 0
+            for log in session.query(PredictionLog).filter(PredictionLog.result.is_(None)).all():
+                match = session.query(Match).filter(Match.id == log.match_id).first()
+                info = self._settle_match_result(match) if match else None
+                if not info:
+                    continue
+                result, total, btts = info
+                log.result, log.home_goals, log.away_goals = result, match.home_goals, match.away_goals
+                if log.p_home is not None:
+                    pred = max([('H', log.p_home), ('D', log.p_draw or 0), ('A', log.p_away or 0)],
+                               key=lambda x: x[1])[0]
+                    log.hit_1x2 = (pred == result)
+                if log.p_over25 is not None:
+                    log.hit_ou25 = ((log.p_over25 > 0.5) == (total > 2.5))
+                if log.p_btts_yes is not None:
+                    log.hit_btts = ((log.p_btts_yes > 0.5) == btts)
+                settled_logs += 1
+
+            settled_slips = 0
+            for slip in session.query(BetSlip).filter(BetSlip.status == 'OPEN').all():
+                legs = slip.legs or []
+                won, pending = True, False
+                for leg in legs:
+                    match = session.query(Match).filter(Match.id == leg.get('match_id')).first()
+                    info = self._settle_match_result(match) if match else None
+                    if not info:
+                        pending = True
+                        break
+                    result, total, btts = info
+                    sel, mkt = leg.get('selection'), leg.get('market')
+                    if mkt == '1X2':
+                        ok = ({'1': 'H', 'X': 'D', '2': 'A'}.get(sel) == result)
+                    elif mkt == 'O/U 2.5':
+                        ok = ((sel == 'Over 2.5') == (total > 2.5))
+                    elif mkt == 'BTTS':
+                        ok = ((sel == 'GG Sì') == btts)
+                    else:
+                        ok = False
+                    if not ok:
+                        won = False
+                        break
+                if pending:
+                    continue
+                slip.status = 'WON' if won else 'LOST'
+                slip.settled_at = datetime.utcnow()
+                slip.profit = round(slip.stake * (slip.total_odds - 1), 2) if won else round(-slip.stake, 2)
+                settled_slips += 1
+
+            session.commit()
+            logger.info(f"Settled {settled_logs} prediction logs, {settled_slips} slips")
+        finally:
+            if own_session:
+                session.close()
 
     def retrain_models_weekly(self):
         """Weekly model retraining with full historical data"""
@@ -434,6 +552,7 @@ def run_once(job_name: str):
         'live': scheduler.update_live_scores,
         'retrain': scheduler.retrain_models_weekly,
         'odds': scheduler.update_gamdom_odds,
+        'settle': scheduler.settle_logs_and_slips,
     }
     if job_name in jobs:
         jobs[job_name]()

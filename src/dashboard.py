@@ -14,8 +14,63 @@ st.set_page_config(
     page_title="Serie A Predictor",
     page_icon="⚽",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
+
+# Dark pro styling
+import plotly.io as pio
+pio.templates.default = "plotly_dark"
+
+st.markdown("""
+<style>
+  /* Typography */
+  h1 { letter-spacing: -0.5px; font-weight: 800 !important; }
+  h2, h3 { letter-spacing: -0.3px; font-weight: 700 !important; }
+
+  /* Top tabs */
+  .stTabs [data-baseweb="tab-list"] { gap: 4px; padding: 4px 0; }
+  .stTabs [data-baseweb="tab"] {
+    font-size: 0.85rem; font-weight: 600;
+    padding: 10px 16px; border-radius: 10px 10px 0 0;
+    color: #9AA4B2;
+  }
+  .stTabs [aria-selected="true"] {
+    color: #22C55E !important;
+    border-bottom: 2px solid #22C55E !important;
+  }
+
+  /* Metric cards */
+  [data-testid="stMetric"] {
+    background: #151A23;
+    border: 1px solid #232B38;
+    border-radius: 12px;
+    padding: 12px 16px;
+  }
+  [data-testid="stMetricLabel"] { color: #9AA4B2 !important; font-size: 0.78rem !important; }
+  [data-testid="stMetricValue"] { font-weight: 800 !important; }
+
+  /* Expanders + buttons */
+  [data-testid="stExpander"] { border: 1px solid #232B38; border-radius: 12px; }
+  .stButton > button { border-radius: 10px; font-weight: 600; }
+  .stDownloadButton > button { border-radius: 10px; }
+
+  /* Badges */
+  .pill { display: inline-block; padding: 2px 10px; border-radius: 999px;
+          font-size: 0.75rem; font-weight: 700; }
+  .pill-open { background: #1E3A2B; color: #22C55E; border: 1px solid #22C55E55; }
+  .pill-won { background: #123B22; color: #4ADE80; border: 1px solid #4ADE80; }
+  .pill-lost { background: #3B1212; color: #F87171; border: 1px solid #F87171; }
+  .pill-edge { background: #13233B; color: #60A5FA; border: 1px solid #60A5FA55; }
+  .hero {
+    background: linear-gradient(135deg, #0F2E1D 0%, #151A23 60%);
+    border: 1px solid #22C55E33;
+    border-radius: 14px; padding: 18px 22px; margin-bottom: 14px;
+  }
+  .hero h1 { margin: 0; font-size: 1.9rem; }
+  .hero p { margin: 4px 0 0 0; color: #9AA4B2; }
+  .section-title { margin-top: 6px; }
+</style>
+""", unsafe_allow_html=True)
 
 # Load config
 @st.cache_data
@@ -299,23 +354,30 @@ def plot_team_form(form_df, team_name):
     return fig
 
 
-# Sidebar
+# Sidebar (status only — navigation moved to top tabs)
 st.sidebar.title("⚽ Serie A Predictor")
 st.sidebar.caption(f"Data updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+try:
+    _sess = get_db_session()
+    _n_up = _sess.query(Match).filter(Match.status.in_(['SCHEDULED', 'TIMED'])).count()
+    _n_odds = _sess.query(Match).filter(Match.odds_source == 'gamdom').count()
+    _sess.close()
+    st.sidebar.metric("Partite monitorate", _n_up)
+    st.sidebar.metric("Con quote Gamdom", _n_odds)
+except Exception:
+    pass
 
-# Navigation
-page = st.sidebar.radio("Navigation", [
-    "🏠 Dashboard",
-    "📅 Prossime Partite",
-    "📊 Classifica",
-    "📈 Analisi Squadra",
-    "🎯 Value Bets",
-    "⚙️ Impostazioni"
+# Top navigation tabs
+tab_dash, tab_next, tab_table, tab_team, tab_value, tab_hist, tab_slips, tab_conf = st.tabs([
+    "🏠 Dashboard", "📅 Prossime", "📊 Classifica", "📈 Squadre",
+    "🎯 Value Bets", "📜 History", "🧾 Bet Slips", "⚙️ Setup",
 ])
 
 # Main content
-if page == "🏠 Dashboard":
-    st.title("Serie A Predictor - Dashboard")
+with tab_dash:
+    st.markdown("""<div class="hero"><h1>⚽ Serie A Predictor</h1>
+    <p>Modello ensemble Poisson + Dixon-Coles + Elo &nbsp;•&nbsp; Quote live Gamdom &nbsp;•&nbsp; Edge detection</p></div>""",
+                unsafe_allow_html=True)
     
     # Key metrics
     col1, col2, col3, col4 = st.columns(4)
@@ -382,7 +444,7 @@ if page == "🏠 Dashboard":
             hide_index=True
         )
 
-elif page == "📅 Prossime Partite":
+with tab_next:
     st.title("Prossime Partite Serie A")
     
     days = st.slider("Giorni avanti", 1, 30, 14)
@@ -424,7 +486,7 @@ elif page == "📅 Prossime Partite":
                     
                     st.divider()
 
-elif page == "📊 Classifica":
+with tab_table:
     st.title("Classifica Serie A")
 
     standings, season_label = get_live_standings()
@@ -457,7 +519,7 @@ elif page == "📊 Classifica":
     fig.update_layout(xaxis_tickangle=-45, height=500)
     st.plotly_chart(fig, use_container_width=True)
 
-elif page == "📈 Analisi Squadra":
+with tab_team:
     st.title("Analisi Squadra")
     
     session = get_db_session()
@@ -497,7 +559,7 @@ elif page == "📈 Analisi Squadra":
             else:
                 st.info("Nessuna partita in programma")
 
-elif page == "🎯 Value Bets":
+with tab_value:
     st.title("Value Bets Detection")
     st.caption("Modello vs quote Gamdom: edge = probabilità modello − probabilità implicita")
 
@@ -550,7 +612,145 @@ elif page == "🎯 Value Bets":
     else:
         st.info("Nessun edge > 5% al momento. Se le quote mancano, premi 'Aggiorna quote Gamdom' in Impostazioni.")
 
-elif page == "⚙️ Impostazioni":
+with tab_hist:
+    st.markdown("## 📜 History — tutte le previsioni")
+    st.caption("Snapshot giornalieri di modello + quote Gamdom. Gli esiti si compilano da soli a fine partita.")
+    from src.tracking import get_prediction_logs, history_summary
+
+    logs = get_prediction_logs()
+    if len(logs) == 0:
+        st.info("Nessuno snapshot ancora. Premi 'Aggiorna Dati Ora' nel Setup o attendi lo scheduler.")
+    else:
+        summ = history_summary(logs)
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Snapshot chiusi", f"{summ['n_closed']}/{summ['n_total']}")
+        k2.metric("Hit 1X2", f"{summ['acc_1x2']:.1%}" if summ['acc_1x2'] is not None else "—",
+                  help=f"su {summ['acc_1x2_n']} pronostici" if summ['acc_1x2_n'] else None)
+        k3.metric("Hit Over/Under", f"{summ['acc_ou25']:.1%}" if summ['acc_ou25'] is not None else "—")
+        k4.metric("Hit BTTS", f"{summ['acc_btts']:.1%}" if summ['acc_btts'] is not None else "—")
+        k5.metric("In attesa", summ['n_open'])
+
+        if summ['calibration']:
+            cal_df = pd.DataFrame(summ['calibration'])
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=cal_df['bucket'], y=cal_df['hit'], name='Hit rate reale',
+                                 marker_color='#22C55E', text=cal_df['n'], textposition='outside'))
+            fig.add_trace(go.Scatter(x=cal_df['bucket'],
+                                     y=[(int(b.split('-')[0]) + 5) / 100 for b in cal_df['bucket']],
+                                     name='Confidenza modello', mode='lines+markers',
+                                     line=dict(color='#60A5FA', dash='dash')))
+            fig.update_layout(title='Calibration — confidenza modello vs realtà (n = n. casi)',
+                              yaxis=dict(tickformat='.0%', range=[0, 1]), height=340)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("La calibration apparirà quando almeno un pronostico sarà chiuso.")
+
+        st.subheader("Registro completo")
+        f_status = st.radio("Filtro", ["Tutti", "Chiusi ✅", "Aperti ⏳"], horizontal=True, key="hist_filter")
+        view = logs.copy()
+        if f_status == "Chiusi ✅":
+            view = view[view['result'].notna()]
+        elif f_status == "Aperti ⏳":
+            view = view[view['result'].isna()]
+        show = view[['log_date', 'match', 'match_date', 'p_home', 'p_draw', 'p_away',
+                     'odds_1', 'odds_x', 'odds_2', 'result', 'score', 'hit_1x2', 'hit_ou25', 'hit_btts']].copy()
+        for c in ['p_home', 'p_draw', 'p_away']:
+            show[c] = show[c].map(lambda v: f"{v:.0%}" if pd.notna(v) else "—")
+        st.dataframe(show, use_container_width=True, hide_index=True)
+
+with tab_slips:
+    st.markdown("## 🧾 Bet Slips — schedine tracciate")
+    st.caption("Suggerite dal tool su base edge Kelly. Solo tracking: lo stato si aggiorna da solo a fine partite.")
+    from src.tracking import current_edges, kelly_stake, create_slip, get_slips, slip_summary
+
+    edges = current_edges(min_edge=0.03)
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        n_legs = st.slider("Gambe multipla", 2, 5, 3, key="slip_n")
+    with c2:
+        stake_in = st.number_input("Stake (unità)", 0.5, 20.0, 2.0, 0.5, key="slip_stake")
+    with c3:
+        st.write("")
+        gen = st.button("🎲 Genera slip suggerita", use_container_width=True)
+
+    if gen:
+        if len(edges) < n_legs:
+            st.warning(f"Solo {len(edges)} edge ≥ 3% disponibili, ne servono {n_legs}.")
+        else:
+            legs = edges[:n_legs]
+            tot_o, tot_p = 1.0, 1.0
+            for leg in legs:
+                tot_o *= leg['odds']
+                tot_p *= leg['model_prob']
+            kelly = kelly_stake(tot_p, tot_o)
+            st.session_state['suggested'] = {'legs': legs, 'total_odds': round(tot_o, 2),
+                                             'combined_prob': round(tot_p, 4), 'kelly': kelly}
+
+    sugg = st.session_state.get('suggested')
+    if sugg:
+        st.markdown("### Slip suggerita")
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Quota totale", f"{sugg['total_odds']:.2f}")
+        s2.metric("Prob. stimata", f"{sugg['combined_prob']:.1%}")
+        s3.metric("Edge vs implicita", f"{sugg['combined_prob'] - 1/sugg['total_odds']:+.1%}")
+        s4.metric("Stake Kelly/4", f"{sugg['kelly']:.2f}u")
+        st.dataframe(pd.DataFrame([{
+            'Match': f"{l['home']} vs {l['away']}", 'Data': l['date'], 'Mercato': l['market'],
+            'Esito': l['selection'], 'Modello': f"{l['model_prob']:.1%}",
+            'Quota': l['odds'], 'Edge': f"{l['edge']:+.1%}"} for l in sugg['legs']]),
+            use_container_width=True, hide_index=True)
+        if st.button("💾 Salva questa slip", key="save_suggested"):
+            sid = create_slip(sugg['legs'], stake_in, name=f"Multipla x{sugg['total_odds']:.2f}")
+            st.success(f"Slip #{sid} salvata e in tracking.")
+            st.session_state.pop('suggested', None)
+
+    st.markdown("### Singole ad alto edge")
+    if edges:
+        top = pd.DataFrame([{
+            'Match': f"{e['home']} vs {e['away']}", 'Mercato': e['market'], 'Esito': e['selection'],
+            'Modello': f"{e['model_prob']:.1%}", 'Quota': e['odds'],
+            'Edge': f"{e['edge']:+.1%}", 'Kelly/4': f"{kelly_stake(e['model_prob'], e['odds']):.2f}u",
+            '_i': i} for i, e in enumerate(edges[:12])])
+        st.dataframe(top.drop(columns=['_i']), use_container_width=True, hide_index=True)
+        pick = st.selectbox("Salva una singola come slip:", [f"#{r['_i']} {r['Match']} — {r['Esito']} @{r['Quota']}" for _, r in top.iterrows()], key="pick_single")
+        if st.button("💾 Salva singola", key="save_single"):
+            e = edges[int(pick.split()[0][1:])]
+            sid = create_slip([e], stake_in, name=f"Singola {e['selection']} @{e['odds']}")
+            st.success(f"Slip #{sid} salvata e in tracking.")
+    else:
+        st.info("Nessun edge ≥ 3% al momento.")
+
+    st.markdown("### Le mie slip")
+    summ = slip_summary()
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Totale slip", summ['total'])
+    m2.metric("Aperte", summ['open'])
+    m3.metric("Win rate", f"{summ['win_rate']:.1%}" if summ['win_rate'] is not None else "—")
+    m4.metric("Profitto", f"{summ['profit']:+.2f}u")
+    m5.metric("ROI", f"{summ['roi']:+.1%}" if summ['roi'] is not None else "—")
+
+    sub_open, sub_won, sub_lost = st.tabs(["⏳ Aperte", "✅ Vinte", "❌ Perse"])
+    for sub, status, pill in [(sub_open, 'OPEN', 'pill-open'), (sub_won, 'WON', 'pill-won'), (sub_lost, 'LOST', 'pill-lost')]:
+        with sub:
+            df = get_slips(status)
+            if len(df) == 0:
+                st.caption("Nessuna slip qui.")
+            for _, s in df.iterrows():
+                p = 'WON' if s['status'] == 'WON' else ('LOST' if s['status'] == 'LOST' else 'OPEN')
+                with st.expander(f"#{s['id']} {s['name']} — quota {s['quota']:.2f} — {s['stake']}u"):
+                    st.markdown(f"<span class='pill {pill}'>{p}</span> &nbsp; profitto: **{s['profit']:+.2f}u**" if pd.notna(s['profit']) else f"<span class='pill {pill}'>{p}</span>", unsafe_allow_html=True)
+                    st.dataframe(pd.DataFrame([{
+                        'Match': f"{l.get('home')} vs {l.get('away')}", 'Mercato': l.get('market'),
+                        'Esito': l.get('selection'), 'Quota': l.get('odds')} for l in s['_legs']]),
+                        use_container_width=True, hide_index=True)
+
+    if st.button("🔄 Ricalcola esiti ora", key="settle_now"):
+        with st.spinner("Controllo risultati..."):
+            from src.scheduler import SerieAScheduler
+            SerieAScheduler().settle_logs_and_slips()
+        st.success("Esiti aggiornati.")
+
+with tab_conf:
     st.title("Impostazioni")
     
     st.subheader("Configurazione Modelli")

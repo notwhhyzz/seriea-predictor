@@ -231,6 +231,69 @@ class ModelPerformance(Base):
     )
 
 
+class PredictionLog(Base):
+    """Daily snapshot of model predictions + bookmaker odds per match.
+    Result/hit columns are backfilled by settle job once match finishes."""
+    __tablename__ = "prediction_log"
+    id = Column(Integer, primary_key=True)
+    match_id = Column(Integer, ForeignKey("matches.id"), nullable=False)
+    log_date = Column(Date, nullable=False)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+    # Model probabilities
+    p_home = Column(Float)
+    p_draw = Column(Float)
+    p_away = Column(Float)
+    p_over25 = Column(Float)
+    p_under25 = Column(Float)
+    p_btts_yes = Column(Float)
+    p_btts_no = Column(Float)
+
+    # Bookmaker odds at snapshot time
+    odds_1 = Column(Float)
+    odds_x = Column(Float)
+    odds_2 = Column(Float)
+    odds_over25 = Column(Float)
+    odds_under25 = Column(Float)
+    odds_btts_yes = Column(Float)
+    odds_btts_no = Column(Float)
+    odds_source = Column(String(50))
+
+    # Settlement (filled when match finishes)
+    result = Column(String(1))  # H, D, A
+    home_goals = Column(Integer)
+    away_goals = Column(Integer)
+    hit_1x2 = Column(Boolean)
+    hit_ou25 = Column(Boolean)
+    hit_btts = Column(Boolean)
+
+    match = relationship("Match")
+
+    __table_args__ = (
+        UniqueConstraint('match_id', 'log_date', name='unique_log_per_match_day'),
+        Index('idx_log_date', 'log_date'),
+    )
+
+
+class BetSlip(Base):
+    """Tracked bet slip: suggested or manual, auto-settled from results."""
+    __tablename__ = "bet_slips"
+    id = Column(Integer, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    name = Column(String(200))
+    legs = Column(JSON)  # [{match_id, date, home, away, market, selection, model_prob, odds}]
+    total_odds = Column(Float)
+    combined_prob = Column(Float)
+    stake = Column(Float, default=1.0)  # units
+    status = Column(String(10), default="OPEN")  # OPEN, WON, LOST
+    settled_at = Column(DateTime)
+    profit = Column(Float)  # units (+/-), set on settlement
+
+    __table_args__ = (
+        Index('idx_slip_status', 'status'),
+    )
+
+
 _migrated_paths = set()
 
 
